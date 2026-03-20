@@ -34,7 +34,6 @@ class BotCommands(commands.Cog):
         server_id = interaction.guild_id
         tasks = await self.db.get_tasks(server_id)
         
-        # กรองเฉพาะงานที่คำค้นหาตรงกับที่เพื่อนมึงพิมพ์
         choices = []
         for t in tasks:
             if current.lower() in t['task_name'].lower():
@@ -135,7 +134,7 @@ class BotCommands(commands.Cog):
         success = await self.db.set_default_schedule(server_id, day.value, attire, subjects)
         if success:
             await self.db.log_action(server_id, interaction.user.name, "Set Schedule", f"แก้วัน{day.value} เป็นชุด {attire}")
-            await interaction.response.send_message(f"✅ บันทึกตารางวัน**{day.value}**\n👗 ชุด: {attire}\n📚 วิชา: {subjects}")
+            await interaction.response.send_message(f"✅ บันทึกตารางวัน**{day.value}**\n👕 ชุด: {attire}\n📚 วิชา: {subjects}")
         else:
             await interaction.response.send_message("❌ ผิดพลาด", ephemeral=True)
 
@@ -148,7 +147,7 @@ class BotCommands(commands.Cog):
         success = await self.db.set_override(server_id, target_date, new_attire, note)
         if success:
             await self.db.log_action(server_id, interaction.user.name, "Set Override", f"วันที่ {target_date} ใส่ชุด {new_attire}")
-            await interaction.response.send_message(f"🚨 **ตั้งค่าข้อยกเว้นวันที่ {target_date}**\n👗 ใส่ชุด: {new_attire}\n📝 หมายเหตุ: {note}")
+            await interaction.response.send_message(f"🚨 **ตั้งค่าข้อยกเว้นวันที่ {target_date}**\n👕 ใส่ชุด: {new_attire}\n📝 หมายเหตุ: {note}")
         else:
             await interaction.response.send_message("❌ ผิดพลาด", ephemeral=True)
 
@@ -175,7 +174,7 @@ class BotCommands(commands.Cog):
         task_name = await self.db.mark_done_returning(task_id)
         if task_name:
             await self.db.log_action(interaction.guild_id, interaction.user.name, "Mark Done", f"ส่งงาน {task_name} แล้ว")
-            await interaction.response.send_message(f"✅ ทำสัญลักษณ์ว่างาน **{task_name}** เสร็จเรียบร้อยแล้ว!")
+            await interaction.response.send_message(f"✅ ทำสัญลักษณ์ว่างาน **{task_name}** เสร็จ เรียบร้อยแล้ว!")
         else:
             await interaction.response.send_message(f"❌ ไม่พบงานนี้ หรืออาจจะถูกลบไปแล้ว", ephemeral=True)
 
@@ -193,7 +192,7 @@ class BotCommands(commands.Cog):
     @app_commands.command(name="list_tasks", description="ดูลิสต์งานทั้งหมดที่ยังไม่เสร็จ")
     async def list_tasks(self, interaction: discord.Interaction):
         tasks = await self.db.get_tasks(interaction.guild_id)
-        if not tasks: return await interaction.response.send_message("🎉 ไม่มีงานค้างเลยเว้ยเพื่อน!")
+        if not tasks: return await interaction.response.send_message("🎉 ไม่มีงานเลยจ้าา")
 
         embed = discord.Embed(title="📋 รายการงานที่ยังไม่เสร็จ", color=discord.Color.blue())
         for task in tasks:
@@ -227,7 +226,7 @@ class BotCommands(commands.Cog):
         success = await self.db.add_daily_note(interaction.guild_id, target_date, bring_items, announcement)
         if success:
             await self.db.log_action(interaction.guild_id, interaction.user.name, "Add Note", f"โน้ตของวันที่ {target_date}")
-            await interaction.response.send_message(f"📌 **บันทึกโน้ตวันที่ {target_date}**\n🎒 เตรียม: {bring_items}\n📢 โน้ต: {announcement}")
+            await interaction.response.send_message(f"📌 **บันทึกโน้ตวันที่ {target_date}**\n🎒 ให้เตรียม: {bring_items}\n📢 โน้ต: {announcement}")
         else:
             await interaction.response.send_message("❌ ผิดพลาด", ephemeral=True)
 
@@ -240,7 +239,7 @@ class BotCommands(commands.Cog):
         deleted_data = await self.db.delete_daily_note_returning(interaction.guild_id, target_date)
         if deleted_data:
             await self.db.log_action(interaction.guild_id, interaction.user.name, "Delete Note", f"ลบโน้ตวันที่ {target_date}")
-            await interaction.response.send_message(f"🗑️ **ลบโน้ตวันที่ {target_date} แล้ว!**\nสิ่งที่หายไป:\n🎒 {deleted_data['bring_items']}\n📢 {deleted_data['announcement']}")
+            await interaction.response.send_message(f"🗑️ **ลบโน้ตวันที่ {target_date} แล้ว!**\nสิ่งที่ลบไป:\n🎒 {deleted_data['bring_items']}\n📢 {deleted_data['announcement']}")
         else:
             await interaction.response.send_message("❌ ไม่มีโน้ตในวันนั้นให้ลบ", ephemeral=True)
 
@@ -296,7 +295,7 @@ class BotCommands(commands.Cog):
 
     def build_summary_embed(self, title, data):
         embed = discord.Embed(title=title, description=f"📅 **วัน{data['day']}ที่ {data['date']}**", color=discord.Color.green())
-        embed.add_field(name="👗 ชุดที่ต้องใส่", value=data['attire'], inline=True)
+        embed.add_field(name="👕 ชุดที่ต้องใส่", value=data['attire'], inline=True)
         embed.add_field(name="📚 วิชาเรียน", value=data['subjects'], inline=True)
         
         if data['bring'] != "-": embed.add_field(name="🎒 สิ่งที่ต้องเตรียม", value=data['bring'], inline=False)
