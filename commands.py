@@ -75,7 +75,7 @@ class BotCommands(commands.Cog):
                     data = await self.fetch_daily_summary(server_id, target_date)
                     if data:
                         embed = self.build_summary_embed("🌙 แจ้งเตือนอัตโนมัติ: เตรียมตัวสำหรับวันพรุ่งนี้!", data)
-                        await channel.send(embed=embed)
+                        await channel.send(content="📢 @everyone สรุปตารางเรียนและงานของวันพรุ่งนี้", embed=embed)
             except Exception as e:
                 # ถ้าห้องไหนมีปัญหา (เช่น โดนลบช่องแชท) ให้ปริ้นท์บอกเฉยๆ ลูปจะได้ไม่พัง
                 print(f"⚠️ [Loop Warning] ส่งข้อความไป server {server_id} ไม่ได้: {e}")
