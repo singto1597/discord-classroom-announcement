@@ -55,7 +55,7 @@ class Database:
             bring_items TEXT,
             announcement TEXT
         );
-        CREATE TABLE audit_logs (
+        CREATE TABLE IF NOT EXISTS audit_logs (
             id SERIAL PRIMARY KEY,
             room_id INTEGER REFERENCES rooms(id) ON DELETE CASCADE,
             user_name TEXT NOT NULL,
