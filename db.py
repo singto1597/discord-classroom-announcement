@@ -23,7 +23,8 @@ class Database:
             id SERIAL PRIMARY KEY,
             server_id BIGINT UNIQUE NOT NULL,
             room_name TEXT NOT NULL,
-            announcement_channel_id BIGINT
+            announcement_channel_id BIGINT,
+            notify_time VARCHAR(5) DEFAULT '19:00'
         );
         CREATE TABLE IF NOT EXISTS default_schedules (
             id SERIAL PRIMARY KEY,
@@ -82,6 +83,28 @@ class Database:
         except Exception as e:
             logger.error(f"Error in get_room_id: {e}")
             return None
+    async def set_notify_time(self, server_id: int, time_str: str):
+        """เปลี่ยนเวลาแจ้งเตือนรายวัน (รูปแบบ HH:MM)"""
+        try:
+            async with self.pool.acquire() as conn:
+                res = await conn.execute("UPDATE rooms SET notify_time = $1 WHERE server_id = $2", time_str, server_id)
+                return res == "UPDATE 1"
+        except Exception as e:
+            logger.error(f"Error in set_notify_time: {e}")
+            return False
+
+    async def get_rooms_to_notify(self, current_time: str):
+        """หาว่าเวลานี้ (current_time) มีห้องไหนต้องแจ้งเตือนบ้าง"""
+        try:
+            async with self.pool.acquire() as conn:
+                # ดึงเฉพาะห้องที่ตั้งเวลาตรงกับตอนนี้ และมีการตั้ง channel ไว้แล้ว
+                return await conn.fetch(
+                    "SELECT server_id, announcement_channel_id FROM rooms WHERE notify_time = $1 AND announcement_channel_id IS NOT NULL", 
+                    current_time
+                )
+        except Exception as e:
+            logger.error(f"Error in get_rooms_to_notify: {e}")
+            return []
 
 
     # ==========================================
@@ -223,6 +246,15 @@ class Database:
         try:
             async with self.pool.acquire() as conn:
                 row = await conn.fetchrow("DELETE FROM tasks WHERE id = $1 RETURNING task_name", task_id)
+                return row['task_name'] if row else None
+        except Exception:
+            return None
+        
+    async def mark_done_returning(self, task_id: int):
+        """อัปเดตงานว่าเสร็จแล้ว และคืนค่าชื่องานกลับมา"""
+        try:
+            async with self.pool.acquire() as conn:
+                row = await conn.fetchrow("UPDATE tasks SET status = 'done' WHERE id = $1 RETURNING task_name", task_id)
                 return row['task_name'] if row else None
         except Exception:
             return None

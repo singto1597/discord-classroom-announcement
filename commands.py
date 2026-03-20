@@ -1,8 +1,9 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord import app_commands
 import datetime
 from datetime import timezone, timedelta
+import re
 
 THAI_TZ = timezone(timedelta(hours=7))
 
@@ -11,6 +12,10 @@ class BotCommands(commands.Cog):
     def __init__(self, bot, db):
         self.bot = bot
         self.db = db
+        self.daily_notification.start()
+    
+    def cog_unload(self):
+        self.daily_notification.cancel()
 
     def parse_date(self, date_str: str):
         try:
@@ -40,6 +45,62 @@ class BotCommands(commands.Cog):
                 
                 choices.append(app_commands.Choice(name=display_name, value=t['id']))
         return choices[:25]
+    
+    # ==========================================
+    # ระบบ Loop แจ้งเตือนอัตโนมัติ
+    # ==========================================
+    @tasks.loop(minutes=1)
+    async def daily_notification(self):
+        """ฟังก์ชันนี้จะรันเช็คตัวเองทุกๆ 1 นาที"""
+        # 1. ดึงเวลาปัจจุบันของไทย ให้อยู่ในรูป "HH:MM" (เช่น "19:00")
+        now = datetime.datetime.now(THAI_TZ)
+        current_time_str = now.strftime("%H:%M")
+
+        # 2. ไปถาม DB ว่ามีห้องไหนตั้งเวลาเตือนตรงกับตอนนี้ไหม?
+        rooms_to_notify = await self.db.get_rooms_to_notify(current_time_str)
+        if not rooms_to_notify: 
+            return # ถ้าไม่มีก็จบการทำงานรอบนี้ไป
+
+        # 3. สร้างข้อมูลของ "วันพรุ่งนี้"
+        target_date = now.date() + timedelta(days=1)
+
+        # 4. วนลูปส่งข้อความให้ทุกห้องที่ถึงเวลา
+        for room in rooms_to_notify:
+            server_id = room['server_id']
+            channel_id = room['announcement_channel_id']
+            
+            try:
+                # หาห้องแชทใน Discord
+                channel = self.bot.get_channel(channel_id)
+                if channel:
+                    data = await self.fetch_daily_summary(server_id, target_date)
+                    if data:
+                        embed = self.build_summary_embed("🌙 แจ้งเตือนอัตโนมัติ: เตรียมตัวสำหรับวันพรุ่งนี้!", data)
+                        await channel.send(embed=embed)
+            except Exception as e:
+                # ถ้าห้องไหนมีปัญหา (เช่น โดนลบช่องแชท) ให้ปริ้นท์บอกเฉยๆ ลูปจะได้ไม่พัง
+                print(f"⚠️ [Loop Warning] ส่งข้อความไป server {server_id} ไม่ได้: {e}")
+    
+    @daily_notification.before_loop
+    async def before_daily_notification(self):
+        await self.bot.wait_until_ready() # รอให้บอทเปิดเสร็จก่อนค่อยเริ่มลูป
+
+    # ==========================================
+    # คำสั่งให้แอดมินเปลี่ยนเวลาได้
+    # ==========================================
+    @app_commands.command(name="set_time", description="ตั้งเวลาแจ้งเตือนรายวัน (ค่าเริ่มต้น 19:00)")
+    @app_commands.describe(time_str="ระบุเวลาแบบ 24 ชั่วโมง เช่น 19:00, 20:30")
+    async def set_time(self, interaction: discord.Interaction, time_str: str):
+        # เช็คว่าคนพิมพ์มาถูกฟอร์แมต HH:MM ไหม
+        if not re.match(r"^([01]?[0-9]|2[0-3]):[0-5][0-9]$", time_str):
+            return await interaction.response.send_message("❌ รูปแบบเวลาผิด ต้องเป็น HH:MM เช่น 19:00, 20:30", ephemeral=True)
+            
+        success = await self.db.set_notify_time(interaction.guild_id, time_str)
+        if success:
+            await self.db.log_action(interaction.guild_id, interaction.user.name, "Set Time", f"เปลี่ยนเวลาเตือนเป็น {time_str}")
+            await interaction.response.send_message(f"⏰ เปลี่ยนเวลาแจ้งเตือนอัตโนมัติเป็น **{time_str} น.** เรียบร้อยแล้ว!")
+        else:
+            await interaction.response.send_message("❌ เกิดข้อผิดพลาด กรุณากด /setup_room ก่อน", ephemeral=True)
 
     # ==========================================
     # หมวด 1: จัดการห้อง
@@ -107,22 +168,17 @@ class BotCommands(commands.Cog):
         else:
             await interaction.response.send_message("❌ เพิ่มงานไม่สำเร็จ", ephemeral=True)
 
+
     @app_commands.command(name="mark_done", description="ติ๊กงานว่าเสร็จแล้ว (มีเมนูให้เลือก)")
     @app_commands.autocomplete(task_id=task_autocomplete)
     async def mark_done(self, interaction: discord.Interaction, task_id: int):
-        try:
-            async with self.db.pool.acquire() as conn:
+        task_name = await self.db.mark_done_returning(task_id)
+        if task_name:
+            await self.db.log_action(interaction.guild_id, interaction.user.name, "Mark Done", f"ส่งงาน {task_name} แล้ว")
+            await interaction.response.send_message(f"✅ ทำสัญลักษณ์ว่างาน **{task_name}** เสร็จเรียบร้อยแล้ว!")
+        else:
+            await interaction.response.send_message(f"❌ ไม่พบงานนี้ หรืออาจจะถูกลบไปแล้ว", ephemeral=True)
 
-                row = await conn.fetchrow("UPDATE tasks SET status = 'done' WHERE id = $1 RETURNING task_name", task_id)
-
-                if row:
-                    task_name = row['task_name']
-                    await self.db.log_action(interaction.guild_id, interaction.user.name, "Mark Done", f"ส่งงาน {task_name} แล้ว")
-                    await interaction.response.send_message(f"✅ ทำสัญลักษณ์ว่างาน **{task_name}** เสร็จเรียบร้อยแล้ว!")
-                else:
-                    await interaction.response.send_message(f"❌ ไม่พบงานนี้ หรืออาจจะถูกลบไปแล้ว", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
 
     @app_commands.command(name="delete_task", description="ลบงานทิ้ง (มีเมนูให้เลือก)")
     @app_commands.autocomplete(task_id=task_autocomplete)
@@ -145,6 +201,20 @@ class BotCommands(commands.Cog):
             created_str = task['created_at'].strftime("%Y-%m-%d") if task['created_at'] else "ไม่ระบุ"
             embed.add_field(name=f"📌 {task['task_name']}", value=f"📅 กำหนดส่ง: {task['due_date']} \n(บันทึกเมื่อ: {created_str})", inline=False)
         await interaction.response.send_message(embed=embed)
+    
+
+    @app_commands.command(name="edit_task", description="แก้ไขชื่องาน หรือ วันกำหนดส่ง (มีเมนูให้เลือก)")
+    @app_commands.autocomplete(task_id=task_autocomplete)
+    async def edit_task(self, interaction: discord.Interaction, task_id: int, new_task_name: str, new_due_date: str):
+        target_date = self.parse_date(new_due_date)
+        if not target_date: return await interaction.response.send_message("❌ วันที่ผิด YYYY-MM-DD", ephemeral=True)
+
+        success = await self.db.edit_task(task_id, new_task_name, target_date)
+        if success:
+            await self.db.log_action(interaction.guild_id, interaction.user.name, "Edit Task", f"แก้งาน ID {task_id} เป็น {new_task_name}")
+            await interaction.response.send_message(f"✏️ **อัปเดตงานสำเร็จ!**\nชื่องาน: {new_task_name}\nส่งวันที่: {target_date}")
+        else:
+            await interaction.response.send_message("❌ แก้ไขไม่สำเร็จ", ephemeral=True)
 
     # ==========================================
     # หมวด 4: โน้ตรายวัน
@@ -238,7 +308,7 @@ class BotCommands(commands.Cog):
                 task_list = task_list[:1000] + "...\n*(และงานอื่นๆ อีกเพียบ ไปเคลียร์ด้วย!)*"
             embed.add_field(name="⚠️ ลิสต์งานค้างทั้งหมด!", value=task_list, inline=False)
         else:
-            embed.add_field(name="✅ ลิสต์งานค้างทั้งหมด!", value="ไม่มีงานจ้า ชิลๆ ไป", inline=False)
+            embed.add_field(name="✅ ลิสต์งานค้างทั้งหมด!", value="ไม่มีงานจ้า", inline=False)
             
         return embed
 
