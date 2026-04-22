@@ -37,7 +37,6 @@ class BotCommands(commands.Cog):
         choices = []
         for t in tasks:
             if current.lower() in t['task_name'].lower():
-                # ตัดชื่อเมนูให้ไม่เกิน 90 ตัวอักษร กัน Error
                 display_name = f"{t['task_name']} (ส่ง {t['due_date']})"
                 if len(display_name) > 100:
                     display_name = display_name[:95] + "..."
@@ -51,25 +50,22 @@ class BotCommands(commands.Cog):
     @tasks.loop(minutes=1)
     async def daily_notification(self):
         """ฟังก์ชันนี้จะรันเช็คตัวเองทุกๆ 1 นาที"""
-        # 1. ดึงเวลาปัจจุบันของไทย ให้อยู่ในรูป "HH:MM" (เช่น "19:00")
+        # ดึงเวลาปัจจุบันของไทย ให้อยู่ในรูป "HH:MM"
         now = datetime.datetime.now(THAI_TZ)
         current_time_str = now.strftime("%H:%M")
 
-        # 2. ไปถาม DB ว่ามีห้องไหนตั้งเวลาเตือนตรงกับตอนนี้ไหม?
+
         rooms_to_notify = await self.db.get_rooms_to_notify(current_time_str)
         if not rooms_to_notify: 
-            return # ถ้าไม่มีก็จบการทำงานรอบนี้ไป
+            return
 
-        # 3. สร้างข้อมูลของ "วันพรุ่งนี้"
         target_date = now.date() + timedelta(days=1)
 
-        # 4. วนลูปส่งข้อความให้ทุกห้องที่ถึงเวลา
         for room in rooms_to_notify:
             server_id = room['server_id']
             channel_id = room['announcement_channel_id']
             
             try:
-                # หาห้องแชทใน Discord
                 channel = self.bot.get_channel(channel_id)
                 if channel:
                     data = await self.fetch_daily_summary(server_id, target_date)
@@ -77,12 +73,52 @@ class BotCommands(commands.Cog):
                         embed = self.build_summary_embed("🌙 แจ้งเตือนอัตโนมัติ: เตรียมตัวสำหรับวันพรุ่งนี้!", data)
                         await channel.send(content="📢 @everyone สรุปตารางเรียนและงานของวันพรุ่งนี้", embed=embed)
             except Exception as e:
-                # ถ้าห้องไหนมีปัญหา (เช่น โดนลบช่องแชท) ให้ปริ้นท์บอกเฉยๆ ลูปจะได้ไม่พัง
                 print(f"⚠️ [Loop Warning] ส่งข้อความไป server {server_id} ไม่ได้: {e}")
     
     @daily_notification.before_loop
     async def before_daily_notification(self):
-        await self.bot.wait_until_ready() # รอให้บอทเปิดเสร็จก่อนค่อยเริ่มลูป
+        await self.bot.wait_until_ready()
+
+
+    @app_commands.command(name="help", description="ดูคู่มือและคำสั่งทั้งหมดของบอท")
+    async def help(self, interaction: discord.Interaction):
+        embed = discord.Embed(
+            title="คู่มือการใช้งาน Classroom-Sync",
+            description="บอทผู้ช่วยประจำห้อง พิมพ์ `/` แล้วตามด้วยคำสั่งพวกนี้ได้เลย:",
+            color=discord.Color.blue()
+        )
+
+        # หมวดหมู่ 1: ดึงดูข้อมูล 
+        embed.add_field(name="📅 หมวดเช็คตาราง", value=
+            "`/today` - ดูตารางเรียนและงานของวันนี้\n"
+            "`/tomorrow` - ดูตารางเรียนและงานของวันพรุ่งนี้\n"
+            "`/list_tasks` - เช็คงานค้างทั้งหมดของห้อง", inline=False)
+
+        # หมวดหมู่ 2: จัดการงาน
+        embed.add_field(name="📝 หมวดจัดการงาน", value=
+            "`/add_task` - เพิ่มงาน/การบ้านใหม่\n"
+            "`/edit_task` - แก้ไขชื่องานหรือวันส่ง\n"
+            "`/mark_done` - ติ๊กส่งงาน (จะได้เลิกเตือน)\n"
+            "`/delete_task` - ลบงานทิ้งไปเลย", inline=False)
+
+        # หมวดหมู่ 3: จัดการโน้ตและตารางพิเศษ
+        embed.add_field(name="📌 หมวดโน้ตและข้อยกเว้น", value=
+            "`/add_note` - โน้ตของที่ต้องเอามา/ประกาศพิเศษ\n"
+            "`/delete_note` - ลบโน้ตรายวัน\n"
+            "`/set_override` - ตั้งข้อยกเว้นชุดหรือกิจกรรมรายวัน", inline=False)
+
+        # หมวดหมู่ 4: ตั้งค่า
+        embed.add_field(name="⚙️ หมวดตั้งค่าระบบ (แอดมิน)", value=
+            "`/setup_room` - ลงทะเบียนห้อง (ทำครั้งแรก)\n"
+            "`/set_channel` - เลือกห้องแชทให้บอทส่งแจ้งเตือน\n"
+            "`/set_schedule` - ตั้งตารางเรียนยืนพื้นจันทร์-ศุกร์\n"
+            "`/set_time` - ตั้งเวลาแจ้งเตือนรายวันอัตโนมัติ", inline=False)
+
+
+        embed.set_footer(text="💡 ทริค: หลายคำสั่งมีเมนูให้กดเลือก ไม่ต้องพิมพ์เองทั้งหมดนะ")
+
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ==========================================
     # คำสั่งให้แอดมินเปลี่ยนเวลาได้
@@ -90,7 +126,6 @@ class BotCommands(commands.Cog):
     @app_commands.command(name="set_time", description="ตั้งเวลาแจ้งเตือนรายวัน (ค่าเริ่มต้น 19:00)")
     @app_commands.describe(time_str="ระบุเวลาแบบ 24 ชั่วโมง เช่น 19:00, 20:30")
     async def set_time(self, interaction: discord.Interaction, time_str: str):
-        # เช็คว่าคนพิมพ์มาถูกฟอร์แมต HH:MM ไหม
         if not re.match(r"^([01]?[0-9]|2[0-3]):[0-5][0-9]$", time_str):
             return await interaction.response.send_message("❌ รูปแบบเวลาผิด ต้องเป็น HH:MM เช่น 19:00, 20:30", ephemeral=True)
             
@@ -152,7 +187,7 @@ class BotCommands(commands.Cog):
             await interaction.response.send_message("❌ ผิดพลาด", ephemeral=True)
 
     # ==========================================
-    # หมวด 3: จัดการงาน (พร้อมระบบ Dropdown!)
+    # หมวด 3: จัดการงาน 
     # ==========================================
     @app_commands.command(name="add_task", description="เพิ่มงานใหม่")
     async def add_task(self, interaction: discord.Interaction, task_name: str, due_date: str):
@@ -196,7 +231,7 @@ class BotCommands(commands.Cog):
 
         embed = discord.Embed(title="📋 รายการงานที่ยังไม่เสร็จ", color=discord.Color.blue())
         for task in tasks:
-            # โชว์ด้วยว่าบันทึกวันที่เท่าไหร่
+
             created_str = task['created_at'].strftime("%Y-%m-%d") if task['created_at'] else "ไม่ระบุ"
             embed.add_field(name=f"📌 {task['task_name']}", value=f"📅 กำหนดส่ง: {task['due_date']} \n(บันทึกเมื่อ: {created_str})", inline=False)
         await interaction.response.send_message(embed=embed)
@@ -235,7 +270,6 @@ class BotCommands(commands.Cog):
         target_date = self.parse_date(date_str)
         if not target_date: return await interaction.response.send_message("❌ วันที่ผิด", ephemeral=True)
 
-        # รับข้อมูลที่ถูกลบกลับมาโชว์
         deleted_data = await self.db.delete_daily_note_returning(interaction.guild_id, target_date)
         if deleted_data:
             await self.db.log_action(interaction.guild_id, interaction.user.name, "Delete Note", f"ลบโน้ตวันที่ {target_date}")
@@ -244,7 +278,7 @@ class BotCommands(commands.Cog):
             await interaction.response.send_message("❌ ไม่มีโน้ตในวันนั้นให้ลบ", ephemeral=True)
 
     # ==========================================
-    # หมวด 5: เรียกดูข้อมูลแบบทันใจ (แก้บั๊กวิชาหาย + นับถอยหลัง)
+    # หมวด 5: เรียกดูข้อมูลแบบทันใจ
     # ==========================================
     async def fetch_daily_summary(self, server_id, target_date):
         room_id = await self.db.get_room_id(server_id)
@@ -254,25 +288,21 @@ class BotCommands(commands.Cog):
         data = {"date": target_date, "day": day_name, "attire": "-", "subjects": "-", "bring": "-", "note": "-", "tasks_due": []}
 
         async with self.db.pool.acquire() as conn:
-            # 1. ดึงวิชาปกติตลอด! (แก้บั๊กวิชาหาย)
             default = await conn.fetchrow("SELECT attire, subjects FROM default_schedules WHERE room_id = $1 AND day_of_week = $2", room_id, day_name)
             if default:
                 data["attire"] = default["attire"]
                 data["subjects"] = default["subjects"]
             
-            # 2. เช็ค Override ถ้ามี ให้ทับแค่ชุดกับประกาศ
             override = await conn.fetchrow("SELECT new_attire, note FROM schedule_overrides WHERE room_id = $1 AND target_date = $2", room_id, target_date)
             if override:
                 data["attire"] = f"🚨 {override['new_attire']} (กรณีพิเศษ)"
                 data["note"] = override['note']
             
-            # 3. ดึงโน้ตประจำวัน
             note_data = await conn.fetchrow("SELECT bring_items, announcement FROM daily_notes WHERE room_id = $1 AND target_date = $2", room_id, target_date)
             if note_data:
                 data["bring"] = note_data["bring_items"]
                 if not override: data["note"] = note_data["announcement"]
             
-            # 4. ดึงงาน *ทั้งหมด* แล้วคำนวณวันนับถอยหลัง
             today = datetime.datetime.now(THAI_TZ).date()
             tasks = await conn.fetch("SELECT task_name, due_date FROM tasks WHERE room_id = $1 AND status = 'pending' ORDER BY due_date ASC", room_id)
             

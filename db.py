@@ -2,7 +2,6 @@ import asyncpg
 import logging
 from datetime import date
 
-# ตั้งค่า Logging ไว้ดู Error ใน Terminal
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("DB")
 
@@ -97,7 +96,6 @@ class Database:
         """หาว่าเวลานี้ (current_time) มีห้องไหนต้องแจ้งเตือนบ้าง"""
         try:
             async with self.pool.acquire() as conn:
-                # ดึงเฉพาะห้องที่ตั้งเวลาตรงกับตอนนี้ และมีการตั้ง channel ไว้แล้ว
                 return await conn.fetch(
                     "SELECT server_id, announcement_channel_id FROM rooms WHERE notify_time = $1 AND announcement_channel_id IS NOT NULL", 
                     current_time
@@ -143,12 +141,11 @@ class Database:
         """บันทึก ID ของห้องแชทที่จะให้บอทส่งแจ้งเตือนอัตโนมัติ"""
         try:
             async with self.pool.acquire() as conn:
-                # อัปเดตข้อมูลลงไปในห้องที่มี server_id ตรงกัน
                 res = await conn.execute(
                     "UPDATE rooms SET announcement_channel_id = $1 WHERE server_id = $2",
                     channel_id, server_id
                 )
-                return res == "UPDATE 1" # จะ Return True ถ้าอัปเดตสำเร็จ 1 แถว
+                return res == "UPDATE 1"
         except Exception as e:
             logger.error(f"Error in set_announcement_channel: {e}")
             return False
