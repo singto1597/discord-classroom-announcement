@@ -43,6 +43,7 @@ class Database:
             id SERIAL PRIMARY KEY,
             room_id INTEGER REFERENCES rooms(id) ON DELETE CASCADE,
             task_name TEXT NOT NULL,
+            task_detail TEXT,
             due_date DATE NOT NULL,
             status TEXT DEFAULT 'pending',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -197,14 +198,14 @@ class Database:
     # ==========================================
     # หมวด: งานและการบ้าน (Tasks)
     # ==========================================
-    async def add_task(self, server_id: int, task_name: str, due_date: date):
+    async def add_task(self, server_id: int, task_name: str, task_detail: str, due_date: date):
         room_id = await self.get_room_id(server_id)
         if not room_id: return False
         try:
             async with self.pool.acquire() as conn:
                 await conn.execute(
-                    "INSERT INTO tasks (room_id, task_name, due_date) VALUES ($1, $2, $3)",
-                    room_id, task_name, due_date
+                    "INSERT INTO tasks (room_id, task_name, task_detail, due_date) VALUES ($1, $2, $3, $4)",
+                    room_id, task_name, task_detail, due_date
                 )
             return True
         except Exception as e:
@@ -218,20 +219,30 @@ class Database:
         try:
             async with self.pool.acquire() as conn:
                 rows = await conn.fetch(
-                    "SELECT id, task_name, due_date, created_at FROM tasks WHERE room_id = $1 AND status = $2 ORDER BY due_date ASC",
+                    "SELECT id, task_name, task_detail, due_date, created_at FROM tasks WHERE room_id = $1 AND status = $2 ORDER BY due_date ASC",
                     room_id, status
                 )
                 return rows
         except Exception as e:
             logger.error(f"Error in get_tasks: {e}")
             return []
+        
+    async def get_task_by_id(self, task_id: int):
+        """ดึงข้อมูลงานแค่ 1 ชิ้น เอาไปโชว์ในป๊อปอัป"""
+        try:
+            async with self.pool.acquire() as conn:
+                return await conn.fetchrow("SELECT task_name, task_detail, due_date FROM tasks WHERE id = $1", task_id)
+        except Exception as e:
+            logger.error(f"Error in get_task_by_id: {e}")
+            return None
 
-    async def edit_task(self, task_id: int, new_task_name: str, new_due_date: date):
+    async def edit_task(self, task_id: int, new_task_name: str, new_task_detail: str, new_due_date: date):
+        """อัปเดตงาน"""
         try:
             async with self.pool.acquire() as conn:
                 await conn.execute(
-                    "UPDATE tasks SET task_name = $1, due_date = $2 WHERE id = $3",
-                    new_task_name, new_due_date, task_id
+                    "UPDATE tasks SET task_name = $1, task_detail = $2, due_date = $3 WHERE id = $4",
+                    new_task_name, new_task_detail, new_due_date, task_id
                 )
             return True
         except Exception as e:

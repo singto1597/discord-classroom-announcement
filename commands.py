@@ -5,6 +5,11 @@ import datetime
 from datetime import timezone, timedelta
 import re
 
+from ui import edit_task_ui
+from ui import add_task_ui
+from ui import add_note_ui
+from ui import set_override_ui
+
 THAI_TZ = timezone(timedelta(hours=7))
 
 @app_commands.guild_only()
@@ -174,33 +179,25 @@ class BotCommands(commands.Cog):
             await interaction.response.send_message("❌ ผิดพลาด", ephemeral=True)
 
     @app_commands.command(name="set_override", description="ตั้งค่าข้อยกเว้นฉุกเฉิน")
-    async def set_override(self, interaction: discord.Interaction, date_str: str, new_attire: str, note: str = "-"):
+    async def set_override(self, interaction: discord.Interaction):
         server_id = interaction.guild_id
-        target_date = self.parse_date(date_str)
-        if not target_date: return await interaction.response.send_message("❌ รูปแบบวันที่ผิด YYYY-MM-DD", ephemeral=True)
-
-        success = await self.db.set_override(server_id, target_date, new_attire, note)
-        if success:
-            await self.db.log_action(server_id, interaction.user.name, "Set Override", f"วันที่ {target_date} ใส่ชุด {new_attire}")
-            await interaction.response.send_message(f"🚨 **ตั้งค่าข้อยกเว้นวันที่ {target_date}**\n👕 ใส่ชุด: {new_attire}\n📝 หมายเหตุ: {note}")
-        else:
-            await interaction.response.send_message("❌ ผิดพลาด", ephemeral=True)
+        modal = set_override_ui.SetOverrideModal(
+            db=self.db, 
+            server_id=server_id
+        )
+        await interaction.response.send_modal(modal)
 
     # ==========================================
     # หมวด 3: จัดการงาน 
     # ==========================================
     @app_commands.command(name="add_task", description="เพิ่มงานใหม่")
-    async def add_task(self, interaction: discord.Interaction, task_name: str, due_date: str):
+    async def add_task(self, interaction: discord.Interaction):
         server_id = interaction.guild_id
-        target_date = self.parse_date(due_date)
-        if not target_date: return await interaction.response.send_message("❌ วันที่ผิด YYYY-MM-DD", ephemeral=True)
-
-        success = await self.db.add_task(server_id, task_name, target_date)
-        if success:
-            await self.db.log_action(server_id, interaction.user.name, "Add Task", f"เพิ่มงาน {task_name}")
-            await interaction.response.send_message(f"📝 **เพิ่มงานใหม่:** {task_name}\n⏳ **กำหนดส่ง:** {target_date}")
-        else:
-            await interaction.response.send_message("❌ เพิ่มงานไม่สำเร็จ", ephemeral=True)
+        modal = add_task_ui.AddTaskModal(
+            db=self.db, 
+            server_id=server_id
+        )
+        await interaction.response.send_modal(modal)
 
 
     @app_commands.command(name="mark_done", description="ติ๊กงานว่าเสร็จแล้ว (มีเมนูให้เลือก)")
@@ -233,37 +230,36 @@ class BotCommands(commands.Cog):
         for task in tasks:
 
             created_str = task['created_at'].strftime("%Y-%m-%d") if task['created_at'] else "ไม่ระบุ"
-            embed.add_field(name=f"📌 {task['task_name']}", value=f"📅 กำหนดส่ง: {task['due_date']} \n(บันทึกเมื่อ: {created_str})", inline=False)
+            embed.add_field(name=f"📌 {task['task_name']}", value=f"📅 กำหนดส่ง: {task['due_date']} \nรายละเอียด: {task['task_detail']}\n(บันทึกเมื่อ: {created_str})", inline=False)
         await interaction.response.send_message(embed=embed)
     
-
-    @app_commands.command(name="edit_task", description="แก้ไขชื่องาน หรือ วันกำหนดส่ง (มีเมนูให้เลือก)")
+    @app_commands.command(name="edit_task", description="แก้ไขชื่องาน หรือ วันกำหนดส่ง (มีป๊อปอัปให้แก้)")
     @app_commands.autocomplete(task_id=task_autocomplete)
-    async def edit_task(self, interaction: discord.Interaction, task_id: int, new_task_name: str, new_due_date: str):
-        target_date = self.parse_date(new_due_date)
-        if not target_date: return await interaction.response.send_message("❌ วันที่ผิด YYYY-MM-DD", ephemeral=True)
+    async def edit_task(self, interaction: discord.Interaction, task_id: int):
+        task_data = await self.db.get_task_by_id(task_id)
+        if not task_data:
+            return await interaction.response.send_message("❌ ไม่พบงานนี้ในระบบ!", ephemeral=True)
 
-        success = await self.db.edit_task(task_id, new_task_name, target_date)
-        if success:
-            await self.db.log_action(interaction.guild_id, interaction.user.name, "Edit Task", f"แก้งาน ID {task_id} เป็น {new_task_name}")
-            await interaction.response.send_message(f"✏️ **อัปเดตงานสำเร็จ!**\nชื่องาน: {new_task_name}\nส่งวันที่: {target_date}")
-        else:
-            await interaction.response.send_message("❌ แก้ไขไม่สำเร็จ", ephemeral=True)
+        modal = edit_task_ui.EditTaskModal(
+            db=self.db, 
+            task_id=task_id, 
+            old_name=task_data['task_name'], 
+            old_detail=task_data['task_detail'], 
+            old_date=task_data['due_date']
+        )
+        await interaction.response.send_modal(modal)
+    
 
     # ==========================================
     # หมวด 4: โน้ตรายวัน
     # ==========================================
     @app_commands.command(name="add_note", description="เพิ่มโน้ตรายวัน")
-    async def add_note(self, interaction: discord.Interaction, date_str: str, bring_items: str = "-", announcement: str = "-"):
-        target_date = self.parse_date(date_str)
-        if not target_date: return await interaction.response.send_message("❌ วันที่ผิด", ephemeral=True)
-
-        success = await self.db.add_daily_note(interaction.guild_id, target_date, bring_items, announcement)
-        if success:
-            await self.db.log_action(interaction.guild_id, interaction.user.name, "Add Note", f"โน้ตของวันที่ {target_date}")
-            await interaction.response.send_message(f"📌 **บันทึกโน้ตวันที่ {target_date}**\n🎒 ให้เตรียม: {bring_items}\n📢 โน้ต: {announcement}")
-        else:
-            await interaction.response.send_message("❌ ผิดพลาด", ephemeral=True)
+    async def add_note(self, interaction: discord.Interaction):
+        modal = add_note_ui.AddNoteModal(
+            db=self.db, 
+        )
+        await interaction.response.send_modal(modal)
+        
 
     @app_commands.command(name="delete_note", description="ลบโน้ตรายวัน")
     async def delete_note(self, interaction: discord.Interaction, date_str: str):
@@ -357,3 +353,4 @@ class BotCommands(commands.Cog):
 
 async def setup(bot, db):
     await bot.add_cog(BotCommands(bot, db))
+
